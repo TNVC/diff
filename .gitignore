@@ -1,0 +1,8 @@
+*.o
+*.ii
+*.s
+diff
+.log/
+*.txt
+*.db
+.temp/
