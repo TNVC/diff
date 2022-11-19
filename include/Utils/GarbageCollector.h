@@ -1,7 +1,7 @@
 #pragma once
 
 /// Max length of 'SequenceForFree'-array
-#define MAX_LENGTH 10
+#define MAX_LENGTH 100
 
 /// Error`s code for addElementForFree()
 const int SEQUENCE_IS_FULL = 1;

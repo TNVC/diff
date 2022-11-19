@@ -84,6 +84,22 @@ int stricmp(const char *first, const char *second)
   return tolower(first[i]) - tolower(second[i]);
 }
 
+int strincmp(const char *first, const char *second, int maxSize)
+{
+  assert(first);
+  assert(second);
+
+  int i = 0;
+
+  for ( ; first[i] && second[i] && i < maxSize; ++i)
+    if (tolower(first[i]) != tolower(second[i]))
+      return tolower(first[i]) - tolower(second[i]);
+
+  if (i < maxSize)
+    return tolower(first[i]) - tolower(second[i]);
+  return 0;
+}
+
 int isStringEmpty(const char *string)
 {
   for ( ; *string; ++string)
@@ -150,7 +166,7 @@ int trimString(char *string)
 {
   assert(string);
 
-  size_t i = strlen(string);
+  size_t i = strlen(string) - 1;
 
   for ( ; i > 0; --i)
     if (!isspace(string[i]))
@@ -180,4 +196,21 @@ int isDigitString(const char *string)
       }
 
   return true;
+}
+
+char *strndup(const char *string, int size)
+{
+  assert(string);
+
+  size_t realSize = strlen(string);
+
+  realSize = (realSize < (size_t)size ? realSize : (size_t)size) + 1;
+
+  char *buffer = (char *)calloc(realSize, sizeof(char));
+
+  if (!buffer) return nullptr;
+
+  strncpy(buffer, string, (size_t)size);
+
+  return buffer;
 }

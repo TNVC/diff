@@ -4,7 +4,27 @@
 #include <string.h>
 #include "Assert.h"
 
+static int initSettings();
+
+static void destroySettings();
+
 static Settings GlobalSettings = {};
+
+int InitStatus = initSettings();
+
+static int initSettings()
+{
+  atexit(destroySettings);
+
+  return 0;
+}
+
+static void destroySettings()
+{
+  if (GlobalSettings.source   ) free(GlobalSettings.source   );
+  if (GlobalSettings.target   ) free(GlobalSettings.target   );
+  if (GlobalSettings.variables) free(GlobalSettings.variables);
+}
 
 void setSettings(const Settings *settings)
 {

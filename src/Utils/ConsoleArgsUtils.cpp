@@ -2,10 +2,13 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 #include "ResourceBundle.h"
+#include "StringsUtils.h"
 #include "SystemLike.h"
 #include "ErrorHandler.h"
 #include "GarbageCollector.h"
+#include "StringsUtils.h"
 #include "Assert.h"
 
 #define HANDLE_IF(name, handler)                    \
@@ -51,7 +54,7 @@
         {                                                          \
           settings->type = addDirectory(name);                     \
                                                                    \
-          addElementForFree(settings->type);                       \
+          /*addElementForFree(settings->type);*/                   \
         }                                                          \
       else                                                         \
         {                                                          \
@@ -63,24 +66,18 @@
 enum Flags {
   LOAD,
   SAVE,
-  TXT,
-  VIZ,
+  VAR,
   HELP,
   LANG,
-  LOUD,
-  SILENT,
 };
 
 /// Type of indefity console flags
 const char *FLAGS[] = {
   "-load",
   "-save",
-  "-txt",
-  "-viz",
+  "-var",
   "-help",
   "-lang",
-  "-loud",
-  "-silent",
 };
 
 static void setDefaultSettings(Settings *settings);
@@ -98,6 +95,8 @@ static int handleSave(const char *argument, Settings *settings);
 static int handleHelp(Settings *settings);
 
 static int handleLang(const char *argument, Settings *settings);
+
+static int handleVar(const char *argument, Settings *settings);
 
 /// Handle incorrect arguments for flags
 /// @param [in] flag Name of flag wicth geted incorrect argument
@@ -117,7 +116,7 @@ int parseConsoleArgs(const int argc, const char * const argv[], Settings *settin
   assert(settings);
 
   setDefaultSettings(settings);
-  settings->programmName = argv[0];
+  settings->programName = argv[0];
 
   setSettings(settings);
 
@@ -129,19 +128,10 @@ int parseConsoleArgs(const int argc, const char * const argv[], Settings *settin
 
           return CONSOLE_HELP;
         }
-      else if (!strcmp(argv[i], FLAGS[TXT]))
-          settings->hasTxt = true;
-      else if (!strcmp(argv[i], FLAGS[VIZ]))
-        settings->hasViz   = true;
-      else if (!strcmp(argv[i], FLAGS[LOUD]))
-        settings->hasVoice = true;
-      else if (!strcmp(argv[i], FLAGS[SILENT]))
-        settings->hasVoice = false;
-
       ELSE_HANDLE_IF(LOAD, handleLoad);
       ELSE_HANDLE_IF(SAVE, handleSave);
       ELSE_HANDLE_IF(LANG, handleLang);
-
+      ELSE_HANDLE_IF(VAR , handleVar );
       else if (argv[i][0] == '-')
           handleUnknownFlag(argv[i]);
       else
@@ -157,9 +147,6 @@ int parseConsoleArgs(const int argc, const char * const argv[], Settings *settin
   if (!settings->target)
     handleSave(DEFAULT_TARGET_FILE_NAME, settings);
 
-  if (!settings->hasViz && !settings->hasTxt)
-    settings->hasTxt = settings->hasViz = true;
-
   return 0;
 }
 
@@ -167,12 +154,10 @@ static void setDefaultSettings(Settings *settings)
 {
   assert(settings);
 
-  settings->programmName = nullptr;
+  settings->programName  = nullptr;
   settings->source       = nullptr;
   settings->target       = nullptr;
-  settings->hasVoice     = false;
-  settings->hasViz       = false;
-  settings->hasTxt       = false;
+  settings->saveType     = Save::TEXT;
   settings->locale       = db::Locale::EN;
 }
 
@@ -205,14 +190,14 @@ static int handleSave(const char *argument, Settings *settings)
 
 static int handleHelp(Settings *settings)
 {
-  db::ResourceBundle bundle = {};
+  db::ResourceBundle bundle{};
 
   db::getBundle(&bundle, "help", settings->locale);
 
   const char *separator = db::getString(&bundle, "help.separator");
 
   printf(
-         "%s%s%s%s%s%s%s%s%s%s%s", settings->programmName,
+         "%s%s%s%s%s%s%s%s%s%s%s", settings->programName,
          db::getString(&bundle, "help.first"),
          separator,
          db::getString(&bundle, "help.second"),
@@ -226,6 +211,55 @@ static int handleHelp(Settings *settings)
          );
 
   db::destroyBundle(&bundle);
+
+  return 0;
+}
+
+static int handleVar(const char *argument, Settings *settings)
+{
+  int size = 0;
+  for ( ; argument[size] && !isspace(argument[size]) && argument[size] != '='; ++size)
+    continue;
+
+  if (argument[size] != '=')
+    {
+      handleError("Invalid argument[%s]!!", argument);
+
+      return 1;
+    }
+
+  Variable *temp =
+    (Variable *)recalloc(settings->variables, (size_t)++settings->variableCount, sizeof(Variable));
+
+  if (!temp)
+    {
+      handleError("Out of memory!!");
+
+      free(settings->variables);
+
+      return 1;
+    }
+
+  int index = settings->variableCount - 1;
+
+  settings->variables = temp;
+
+  settings->variables[index].name = strndup(argument, size);
+
+  addElementForFree(settings->variables[index].name);
+
+  ++size;
+
+  int offset = 0;
+
+  sscanf(argument + size, "%lg%n", &settings->variables[index].value, &offset);
+
+  if (offset != (int)strlen(argument) - size)//!isDigitString(argument))
+    {
+      handleError("Argument isn`t a number[%s]!!", argument + size);
+
+      return CONSOLE_INCORRECT_ARGUMENTS;
+    }
 
   return 0;
 }
@@ -247,7 +281,6 @@ static int handleLang(const char *argument, Settings *settings)
 
   return 0;
 }
-
 
 static void handleIncorrectArgument(const char *flag, const char *argument)
 {

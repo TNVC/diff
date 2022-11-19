@@ -51,7 +51,7 @@ static void handleMessage(const char *message, va_list args, const char *color, 
 
   printf("%s", color);
 
-  printf("%s: ", settings.programmName);
+  printf("%s: ", settings.programName);
 
   printf("%s: ", prefix);
 

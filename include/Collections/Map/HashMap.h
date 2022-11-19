@@ -30,6 +30,8 @@ namespace db {
     HashMapNode **data;
     size_t capacity;
     size_t size;
+
+    HashMap &operator=(const HashMap &original) = delete;
   };
 
   int getHash(const key_t key);

@@ -1,10 +1,12 @@
 #include "Tree.h"
 #include "TreeDump.h"
+#include "TreeTexIO.h"
 
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include "Settings.h"
 #include "StringsUtils.h"
 #include "Assert.h"
 #include "ErrorHandler.h"
@@ -23,12 +25,27 @@ static void printNode(const db::TreeNode *node, FILE *file);
 
 static db::TreeNode *scanNode(FILE *file, int *error);
 
+static bool isBinary(db::treeValue_t value, db::type_t type);
+
+static bool hasRightOperant(const db::TreeNode *node);
+
 void db::saveTree(const db::Tree *tree, FILE *file, int *error)
 {
   CHECK_VALID(tree, error);
 
   if (!file)
     ERROR();
+
+  Settings settings{};
+
+  getSettings(&settings);
+
+  if (settings.saveType == Save::TEX)
+    {
+      db::saveTexTree(tree, file, error);
+
+      return;
+    }
 
   if(tree->root)
     {
@@ -70,7 +87,7 @@ static void printNode(const db::TreeNode *node, FILE *file)
   fprintf(file, "%s", toString(node->value, node->type));
 
   if (node->right)
-      printNode(node->right, file);
+    printNode(node->right, file);
 
   fprintf(file, ")");
 }
@@ -84,7 +101,10 @@ static char *toString(const db::treeValue_t value, db::type_t type)
   switch (type)
     {
     case db::type_t::OPERATOR:
-      sprintf(buffer, "%s", db::OPERATOR_NAMES[(int)value.number]); break;
+      sprintf(
+              buffer,
+              " %s ",
+              db::OPERATOR_NAMES[(int)value.operat]); break;
     case db::type_t::VARIABLE:
       sprintf(buffer, "%s", value.variable);                        break;
     case db::type_t::NUMBER:
@@ -118,7 +138,7 @@ static db::TreeNode *scanNode(FILE *file, int *error)
 
     char buff[MAX_LEXEME_SIZE] = "";
 
-    if (fscanf(file, " %[^()]", buff))
+    if (fscanf(file, " %[^ ()]", buff) == 1)
       {
         trimString(buff);
 
@@ -140,6 +160,16 @@ static db::TreeNode *scanNode(FILE *file, int *error)
             return nullptr;
           }
 
+        bool isNodeBinary = isBinary(value, type);
+
+        if (( isNodeBinary && !leftChild) ||
+            (!isNodeBinary &&  leftChild))
+          {
+            db::removeNode(leftChild);
+
+            return nullptr;
+          }
+
         newNode = createNode(value, type, error);
 
         if (type == db::type_t::VARIABLE)
@@ -152,11 +182,27 @@ static db::TreeNode *scanNode(FILE *file, int *error)
             return nullptr;
           }
       }
+    else
+      {
+        if (leftChild) db::removeNode(leftChild);
+
+        return nullptr;
+      }
 
     db::TreeNode *rightChild = scanNode(file, error);
 
     newNode->left  = leftChild;
     newNode->right = rightChild;
+
+    bool hasNodeRightOperant = hasRightOperant(newNode);
+
+    if (( hasNodeRightOperant && !rightChild) ||
+        (!hasNodeRightOperant && rightChild))
+      {
+        db::removeNode(newNode);
+
+        return nullptr;
+      }
 
     if (*error || !fscanf(file, " %c", &ch) || ch != ')')
     {
@@ -241,4 +287,22 @@ static db::type_t getType(const char *string, int *error)
     }
 
   return db::type_t::VARIABLE;
+}
+
+static bool isBinary(db::treeValue_t value, db::type_t type)
+{
+  if (type != db::type_t::OPERATOR) return false;
+
+  for (int i = 0; i < db::BINARY_OPERATORS_COUNT; ++i)
+    if (value.operat == db::BINARY_OPERATORS[i])
+      return true;
+
+  return false;
+}
+
+static bool hasRightOperant(const db::TreeNode *node)
+{
+  if (node->type != db::type_t::OPERATOR) return false;
+
+  return true;
 }

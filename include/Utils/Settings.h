@@ -5,18 +5,29 @@
 /// Name of default directory for files
 const char * const DEFAULT_DIRECTORY = "./resources/";
 /// Name of target file if didn`t input anything
-const char * const DEFAULT_TARGET_FILE_NAME = "save.db";
+const char * const DEFAULT_TARGET_FILE_NAME = "save.tex";
 /// Name of source file if didn`t input anything
 const char * const DEFAULT_SOURCE_FILE_NAME = "save.db";
+
+enum class Save {
+  TEXT,
+  TEX,
+};
+
+struct Variable {
+  char *name;
+  int number;
+  double value;
+};
 
 struct Settings {
   char       *source;
   char       *target;
-  const char *programmName;
-  bool        hasVoice;
-  bool        hasViz;
-  bool        hasTxt;
-  db::Locale  locale;
+  const char *programName;
+  Save   saveType;
+  Variable *variables;
+  int variableCount;
+  db::Locale locale;
 };
 
 void setSettings(const Settings *settings);

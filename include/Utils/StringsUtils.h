@@ -21,6 +21,14 @@ String *parseToLines(char *buffer, size_t bufferSize, size_t *lineCount);
 ///         and negative if second bigger than first
 int stricmp(const char *first, const char *second);
 
+/// Compare two C-like strings
+/// @param [in] first First string for compare
+/// @parma [in] second Second string for compare
+/// @param [in] maxSize Max count of chars to compare
+/// @return 0 if strings equal, positive if first bigger than second
+///         and negative if second bigger than first
+int strincmp(const char *first, const char *second, int maxSize);
+
 /// Check that string contains only space chars
 /// @param [in] string C-like string for check
 /// @return 1 if is empty or 0 if is not
@@ -62,3 +70,9 @@ int trimString(char *string);
 /// @param [in/out] string C-like string for check
 /// @return Zero if wasn`t any errors
 int isDigitString(const char *string);
+
+/// Duplicate n chars from string to dinamic memory
+/// @param [in/out] string C-like string for check
+/// @param [in] size Max count of chars to copy
+/// @return Nullptr if wasn`t any errors
+char *strndup(const char *string, int size);

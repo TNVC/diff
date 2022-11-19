@@ -19,17 +19,42 @@ namespace db {
     OPERATOR_SUB,
     OPERATOR_MUL,
     OPERATOR_DIV,
+    OPERATOR_SQRT,
+    //OPERATOR_ROOT,
+    OPERATOR_SIN,
+    OPERATOR_COS,
+    OPERATOR_POW,
+    OPERATOR_LOG,
+    OPERATOR_LN,
+    OPERATORS_COUNT,
   };
+
+  const operator_t BINARY_OPERATORS[] =
+    {
+      OPERATOR_ADD,
+      OPERATOR_SUB,
+      OPERATOR_MUL,
+      OPERATOR_DIV,
+      OPERATOR_POW,
+      OPERATOR_LOG
+      //      OPERATOR_ROOT
+    };
+
+  const int BINARY_OPERATORS_COUNT = 6;
 
   const char *const OPERATOR_NAMES[] =
     {
       "+",
       "-",
       "*",
-      "/"
+      "/",
+      "sqrt",
+      "sin",
+      "cos",
+      "^",
+      "log",
+      "ln"
     };
-
-  const int OPERATORS_COUNT = 4;
 
   typedef char  *variable_t;
   typedef double number_t;
@@ -85,6 +110,10 @@ namespace db {
   TreeNode *createNode(treeValue_t value, type_t type, int *error = nullptr);
 
   TreeNode *createNode(treeValue_t value, type_t type, TreeNode *parent, int leftChild = true, int *error = nullptr);
+
+  TreeNode *createNode(treeValue_t value, type_t type, TreeNode *left, TreeNode *right, int *error = nullptr);
+
+  TreeNode *createNode(const TreeNode *original, int *error = nullptr);
 
   TreeNode *setParent(TreeNode *child, TreeNode *parent, int leftChild = true, int *error = nullptr);
 

@@ -1,11 +1,18 @@
+#include "Diff.h"
 #include "DiffUtils.h"
+#include "DiffDSL.h"
+#include "TreeTexIO.h"
 
-#include "SystemLike.h"
+#include "Settings.h"
 #include "Assert.h"
+#include "ColorOutput.h"
+#include "ResourceBundle.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
-#include <time.h>
+#include <math.h>
+
+#pragma GCC diagnostic ignored "-Wtautological-compare"
 
 #define ERROR(...)                              \
   do                                            \
@@ -16,129 +23,496 @@
       return __VA_ARGS__;                       \
     } while (0)
 
-const char *const OPERATOR_CMDS[] =
-  {
-    "ADD",
-    "SUB",
-    "MUL",
-    "DIV"
-  };
+const double ACCURACY = 1. / 10000.;
 
-const char *const TEMP_DIRECTORY   = ".temp/";
-const char *const TEMP_FILE_PREFIX = "temp";
-const char *const TEMP_FILE_SUFFIX = "asm";
+static inline bool isEqual(double first, double second)
+{
+  return fabs(first - second) < ACCURACY;
+}
 
-const int MAX_CMD_SIZE = 256;
+static inline double factorial(int n)
+{
+  double result = 1;
 
-const int ACCURACY = 10000;
+  for (int i = 2; i <= n; ++i)
+    result *= i;
 
-static char *getTempFileName();
+  return result;
+}
 
-static void printNode(const db::TreeNode *node, FILE *file);
+static double getVariableValue(const Settings *settings,  db::variable_t variable);
 
-db::Tree *diffExpresion(const db::Tree *tree, int *error);
+static db::TreeNode *createNumber(db::number_t value);
 
-void executeExpresion(const db::Tree *tree, int *error)
+static db::TreeNode *createVariable(db::variable_t value);
+
+static bool isConst(const db::TreeNode *node);
+
+static db::TreeNode *simplite(db::TreeNode *node, bool *wasChange, FILE *file);
+
+static db::TreeNode *diff(db::TreeNode *node);
+
+double calculateNode(const Settings *settings, const db::TreeNode *node, double value);
+
+static db::Tree calculateTanget(const Settings *settings, const db::Tree *tree);
+
+static db::Tree calculateSeries(const Settings *settings, const db::Tree *tree);
+
+void something(const db::Tree *tree, FILE *file)
+{
+  Settings settings{};
+
+  bool wasChange = false;
+
+  getSettings(&settings);
+
+  db::Tree tan = calculateTanget(&settings, tree);
+
+  db::Tree ser = calculateSeries(&settings, tree);
+
+
+do
+{
+  wasChange = false;
+  tan.root = simplite(tan.root, &wasChange, file);
+  ser.root = simplite(ser.root, &wasChange, file);
+  } while (wasChange);
+
+  db::saveTexTree(&tan, file);
+  db::saveTexTree(&ser, file);
+
+  //db::destroyTree(&tan);
+  //db::destroyTree(&ser);
+}
+
+db::Tree diffExpresion(const db::Tree *tree, FILE *file, int *error)
 {
   assert(tree);
 
-  char *tempName = getTempFileName();
+  db::Tree diffTree{};
 
-  if (!tempName)
-    ERROR();
-
-  FILE *tempFile = fopen(tempName, "w");
-
-  if (!tempFile)
-    {
-      free(tempName);
-
-      ERROR();
-    }
-
-  fprintf(tempFile, "PUSH 1\nPOP rex\n");
+  db::createTree(&diffTree);
 
   if (tree->root)
     {
-      printNode(tree->root, tempFile);
+      diffTree.root = diff(tree->root);
 
-      fprintf(tempFile, "OUT\n");
+      if (!diffTree.root)
+        ERROR(diffTree);
     }
 
-  fflush(tempFile);
+  bool wasChange = false;
 
-  char buffer[MAX_CMD_SIZE] = "";
+  do
+    {
+      if (file)
+        {
+          fprintf(file, "First\n");
+          db::saveTexTree(tree, file);
+        }
 
-  sprintf(buffer, "../assembler/assembler/assembler -in %s -out %s.bin", tempName, tempName);
+      wasChange = false;
 
-  system(buffer);
+      diffTree.root = simplite(diffTree.root, &wasChange, file);
 
-  sprintf(buffer, "../assembler/softCPU/softcpu -in %s.bin", tempName);
+      if (file)
+        {
+          fprintf(file, "Second\n");
+          db::saveTexTree(tree, file);
+        }
+    } while (wasChange);
 
-  system(buffer);
-
-  free(tempName);
+  return diffTree;
 }
 
-static void printNode(const db::TreeNode *node, FILE *file)
+static db::Tree calculateTanget(const Settings *settings, const db::Tree *originTree)
+{
+  assert(settings);
+  assert(originTree);
+  assert(originTree->root);
+
+  db::TreeNode *var = VAR(strdup("x"));
+
+  double value = getVariableValue(settings, VARIABLE(var));
+
+  db::Tree diffTree{};
+
+  diffTree = diffExpresion(originTree, nullptr);
+
+  db::Tree tree{};
+
+  tree.root = db::createNode(originTree->root);
+
+  tree.root = ADD(
+                  MUL(
+                      NUM(calculateNode(settings, diffTree.root, value)),
+                      SUB(var, NUM(value))
+                     ),
+                  NUM(    calculateNode(settings,     tree.root, value))
+                 );
+
+  return tree;
+}
+
+static db::Tree calculateSeries(const Settings *settings, const db::Tree *originTree)
+{
+  assert(settings);
+  assert(originTree);
+
+  db::TreeNode *var = VAR(strdup("x"));
+
+  double value = getVariableValue(settings, VARIABLE(var));
+
+  db::Tree diffTree{};
+
+  db::Tree series{};
+
+  diffTree = diffExpresion(originTree, nullptr);
+
+  series.root = NUM(calculateNode(settings, diffTree.root, value));
+
+  int n = 10;
+
+  for (int k = 1; k <= n; ++k)
+    {
+      series.root = ADD(
+                        series.root,
+                        DIV(
+                            MUL(
+                                NUM(calculateNode(settings, diffTree.root, value)),
+                                POW(
+                                    SUB(var, NUM(value)),
+                                    NUM(k)
+                                   )
+                               ),
+                            NUM(factorial(k))
+                           )
+                       );
+
+      db::TreeNode *temp = diffTree.root;
+      diffTree = diffExpresion(&diffTree, nullptr);
+      db::removeNode(temp);
+    }
+
+  return series;
+}
+
+void executeExpresion(const db::Tree *tree, double value, int *error)
+{
+  assert(tree);
+  if (!tree->root)
+    ERROR();
+
+  Settings settings{};
+
+  getSettings(&settings);
+
+  double result = calculateNode(&settings, tree->root, value);
+
+  printf("%lg\n", result);
+}
+
+static double getVariableValue(const Settings *settings, db::variable_t variable)
+{
+  assert(settings);
+  assert(variable);
+
+  for (int i = 0; i < settings->variableCount; ++i)
+    if (strcmp(settings->variables[i].name, variable))
+      return settings->variables[i].value;
+
+  printf("%s" ITALIC "%s" RESET ": ", db::getString(getBundle(), "variable.read"),
+         variable);
+
+  double value = NAN;
+
+  while (scanf("%lg", &value) != 1)
+    {
+      while (getchar() != '\n') continue;
+
+      printf("%s", db::getString(getBundle(), "input.incorrect"));
+    }
+
+  while (getchar() != '\n') continue;
+
+  return value;
+}
+
+double calculateNode(const Settings *settings, const db::TreeNode *node, double varValue)
+{
+  assert(settings);
+  assert(node);
+
+  if (IS_NUM(node)) return NUMBER(node);
+  if (IS_VAR(node))
+    {
+      if (!isnan(varValue) && !strcmp(VARIABLE(node), "x"))
+        return varValue;
+
+      return getVariableValue(settings, VARIABLE(node));
+    }
+
+  double leftValue  = (Left  ? calculateNode(settings, Left , varValue) : NAN);
+  double rightValue = (Right ? calculateNode(settings, Right, varValue) : NAN);
+
+  switch (OPERATOR(node))
+    {
+    case db::OPERATOR_ADD : return leftValue + rightValue;
+    case db::OPERATOR_SUB : return leftValue - rightValue;
+    case db::OPERATOR_MUL : return leftValue * rightValue;
+    case db::OPERATOR_DIV : return leftValue / rightValue;
+    case db::OPERATOR_SQRT: return sqrt(rightValue);
+    case db::OPERATOR_SIN : return sin(rightValue);
+    case db::OPERATOR_COS : return cos(rightValue);
+    case db::OPERATOR_POW : return pow(leftValue, rightValue);
+    case db::OPERATOR_LOG : return log(rightValue) / log(leftValue);
+    case db::OPERATOR_LN  : return log(rightValue);
+    case db::OPERATORS_COUNT:
+    default: return NAN;
+    }
+}
+
+static db::TreeNode *diff(db::TreeNode *node)
 {
   assert(node);
-  assert(file);
-
-  if (node->left)
-    printNode(node->left, file);
-
-  if (node->right)
-    printNode(node->right, file);
 
   switch (node->type)
     {
-    case db::type_t::OPERATOR:
-      fprintf(file, "\t%s\n", OPERATOR_CMDS[(int)node->value.operat]);
-      break;
+    case db::type_t::NUMBER:   return NUM(0);
     case db::type_t::VARIABLE:
-      fprintf(file, "\tPUSH rax\n\tPUSH rbx\n");///////////////////////
-      break;
-    case db::type_t::NUMBER:
       {
-        double value = node->value.number;
-        fprintf(file, "\tPUSH %d\n\tPUSH %d\n",
-                (int)(value - (int)value)*ACCURACY, (int)value);
-        break;
+        if (!strcmp(VARIABLE(node), "x"))
+          return NUM(1);
+        else
+          return NUM(0);
       }
-    default:
-      fprintf(file, "ERROR!!\n");
-      break;
+    case db::type_t::OPERATOR:
+      switch (OP_VAL(node))
+        {
+        case db::OPERATOR_ADD:
+          return ADD(dLeft, dRight);
+        case db::OPERATOR_SUB:
+          return SUB(dLeft, dRight);
+        case db::OPERATOR_MUL:
+          return ADD(MUL(dLeft, CopyRight), MUL(CopyLeft, dRight));
+        case db::OPERATOR_DIV:
+          return DIV(
+                     SUB(MUL(dLeft, CopyRight), MUL(CopyLeft, dRight)),
+                     MUL(CopyRight, CopyRight)
+                    );
+        case db::OPERATOR_SIN:
+          return MUL(COS(CopyRight), dRight);
+        case db::OPERATOR_COS:
+          return MUL(NUM(-1), MUL(SIN(CopyRight), dRight));
+        case db::OPERATOR_POW:
+          {
+            bool isLeftConst  = isConst(Left);
+            bool isRightConst = isConst(Right);
+
+            if (isLeftConst && isRightConst)
+              return NUM(0);
+
+            if (isLeftConst && !isRightConst)
+              return MUL(
+                         MUL(POW(CopyLeft, CopyRight), LN(CopyLeft)),
+                         dRight
+                        );
+
+            if (!isLeftConst && isRightConst)
+              return MUL(
+                         MUL(
+                             CopyRight,
+                             POW(CopyLeft, SUB(CopyRight, NUM(1)))
+                            ),
+                         dLeft
+                        );
+
+            if (!isLeftConst && !isRightConst)
+              return MUL(
+                         POW(CopyLeft, CopyRight),
+                         ADD(
+                             MUL(dLeft, CopyRight),
+                             MUL(CopyLeft, dRight)
+                            )
+                        );
+
+            return nullptr;
+          }
+        case db::OPERATOR_SQRT:
+          return DIV(dRight, MUL(NUM(2), SQRT(CopyRight)));
+        case db::OPERATOR_LOG:
+          return DIV(MUL(dRight, LN(CopyLeft)), CopyRight);
+        case db::OPERATOR_LN:
+          return DIV(dRight, CopyRight);
+        case db::OPERATORS_COUNT:
+        default: return nullptr;
+        }
+    default: return nullptr;
     }
 }
 
-static char *getTempFileName()
+static db::TreeNode *createNumber(db::number_t value)
 {
-  time_t now = 0;
-  time(&now);
-  char *dataString = ctime(&now);
+  db::TreeNode *node = db::createNode({.number = value}, db::type_t::NUMBER);
 
-  for (int i = 0; dataString[i]; ++i)
-    if (isspace(dataString[i]) || ispunct(dataString[i]))
-      dataString[i] = '_';
+  return node;
+}
 
-  size_t size =
-    sizeof(TEMP_DIRECTORY)   +
-    sizeof(TEMP_FILE_PREFIX) +
-    sizeof(TEMP_FILE_SUFFIX) +
-    strlen(dataString)       + 3;
+static db::TreeNode *createVariable(db::variable_t value)
+{
+  db::TreeNode *node = db::createNode({.variable = value}, db::type_t::VARIABLE);
 
-  char *newTempFileName = (char *) calloc(size, sizeof(char));
+  return node;
+}
 
-  if (!isPointerCorrect(newTempFileName))
-    return strdup(".temp/temp_defaultTempFile.asm");
+static bool isConst(const db::TreeNode *node)
+{
+  assert(node);
 
-  strcat (newTempFileName, TEMP_DIRECTORY);
-  strcat (newTempFileName, TEMP_FILE_PREFIX);
-  strcat (newTempFileName, "_");
-  strncat(newTempFileName, dataString, strlen(dataString) - 1);
-  strcat (newTempFileName, ".");
-  strcat (newTempFileName, TEMP_FILE_SUFFIX);
+  if (node->type == db::type_t::VARIABLE)
+    return false;
 
-  return newTempFileName;
+  if (node->left  && !isConst(node->left))
+    return false;
+
+  if (node->right && !isConst(node->right))
+    return false;
+
+  return true;
+}
+
+static db::TreeNode *simplite(db::TreeNode *node, bool *wasChange, FILE *file)
+{
+  assert(node);
+  assert(wasChange);
+
+  if (IS_NUM(node)) return node;
+
+  if (IS_VAR(node)) return node;
+
+  //fprintf(file, "First\n");
+
+  //db::saveTexNode(node, file);
+
+  if (IS_OPERATOR(node))
+    {
+      if (Left ) Left  = simplite(Left , wasChange, file);
+      if (Right) Right = simplite(Right, wasChange, file);
+
+      bool isLeftConst  = (Left  ? isConst(Left ) : true);
+      bool isRightConst = (Right ? isConst(Right) : true);
+
+      switch (OPERATOR(node))
+        {
+        case db::OPERATOR_ADD:
+          {
+            if (isLeftConst && isRightConst)
+              CALC_CONST(NUMBER(Left) + NUMBER(Right));
+            else if (IS_EQUAL(Left, 0)|| IS_EQUAL(Right, 0))
+              UPPER_NODE(IS_EQUAL(Left, 0) ? Right  : Left);
+            else if (IS_NUM(Right) && NUMBER(Right) < 0)
+              {
+                OPERATOR(node) = db::OPERATOR_SUB;
+
+                Right = MUL(NUM(-1), Right);
+              }
+
+            break;
+          }
+        case db::OPERATOR_SUB:
+          {
+            if (isLeftConst && isRightConst)
+              CALC_CONST(NUMBER(Left) - NUMBER(Right));
+            else if (IS_EQUAL(Right, 0))
+              UPPER_NODE(Left);
+            else if (IS_NUM(Right) && NUMBER(Right) < 0)
+              {
+                OPERATOR(node) = db::OPERATOR_ADD;
+
+                Right = MUL(NUM(-1), Right);
+              }
+
+            break;
+          }
+        case db::OPERATOR_MUL:
+          {
+            if (isLeftConst && isRightConst)
+              CALC_CONST(NUMBER(Left) * NUMBER(Right));
+            else if (IS_EQUAL(Left, 0) || IS_EQUAL(Right, 0))
+              TO_NUMBER(0);
+            else if (IS_EQUAL(Left, 1) || IS_EQUAL(Right, 1))
+              UPPER_NODE(IS_EQUAL(Left, 1) ? Right : Left);
+
+            break;
+          }
+        case db::OPERATOR_DIV:
+          {
+              if (isLeftConst && isRightConst)
+                CALC_CONST(NUMBER(Left) / NUMBER(Right));
+              else if (IS_EQUAL(Left, 0))
+                TO_NUMBER(0);
+              else if (IS_EQUAL(Right, 1))
+                UPPER_NODE(Left);
+
+            break;
+          }
+        case db::OPERATOR_SQRT:
+          {
+            if (isRightConst)
+                CALC_CONST(sqrt(NUMBER(Right)));
+
+            break;
+          }
+        case db::OPERATOR_SIN:
+          {
+            if (isRightConst)
+              CALC_CONST(sin(NUMBER(Right)));
+
+            break;
+          }
+        case db::OPERATOR_COS:
+          {
+            if (isRightConst)
+              CALC_CONST(cos(NUMBER(Right)));
+
+            break;
+          }
+        case db::OPERATOR_POW:
+          {
+            if (isLeftConst && isRightConst)
+              CALC_CONST(pow(NUMBER(Left), NUMBER(Right)));
+
+            else if (IS_EQUAL(Left, 1) || IS_EQUAL(Right, 0))
+              TO_NUMBER(1);
+            else if (IS_EQUAL(Right, 1))
+              UPPER_NODE(Left);
+
+            break;
+          }
+        case db::OPERATOR_LOG:
+          {
+            if (isLeftConst && isRightConst)
+              CALC_CONST(log(NUMBER(Right)) / log(NUMBER(Left)));
+
+            break;
+          }
+        case db::OPERATOR_LN:
+          {
+            if (isRightConst)
+              CALC_CONST(log(NUMBER(Right)));
+
+            break;
+          }
+        case db::OPERATORS_COUNT:
+        default:
+            return nullptr;
+        }
+    }
+
+
+  //fprintf(file, "Second\n");
+
+  //db::saveTexNode(node, file);
+
+  return node;
 }

@@ -9,7 +9,7 @@
 #define ERROR(...)                              \
   do                                            \
     {                                           \
-      if (!error)                               \
+      if (error)                                \
         *error = -1;                            \
                                                 \
       return __VA_ARGS__;                       \
@@ -54,6 +54,48 @@ db::TreeNode *db::createNode(db::treeValue_t value, db::type_t type, db::TreeNod
     ERROR(nullptr);
 
   return setParent(node, parent, leftChild, error);
+}
+
+db::TreeNode *db::createNode(db::treeValue_t value, db::type_t type, db::TreeNode *left, db::TreeNode *right, int *error)
+{
+  int errorCode = 0;
+
+  db::TreeNode *node = createNode(value, type, &errorCode);
+
+  if (errorCode)
+    ERROR(nullptr);
+
+  node->left  = left;
+  node->right = right;
+
+  if (left)
+    left->parent  = node;
+  if (right)
+    right->parent = node;
+
+  return node;
+}
+
+db::TreeNode *db::createNode(const db::TreeNode *original, int *error)
+{
+  if (!original)
+    ERROR(nullptr);
+
+  int errorCode = 0;
+
+  db::TreeNode *node =
+    createNode(
+               original->value,
+               original->type,
+               original->left ? db::createNode(original->left) : nullptr,
+               original->right ? db::createNode(original->right) : nullptr,
+               &errorCode
+               );
+
+  if (errorCode)
+    ERROR(nullptr);
+
+  return node;
 }
 
 db::TreeNode *db::setParent(db::TreeNode *child, db::TreeNode *parent, int leftChild, int *error)

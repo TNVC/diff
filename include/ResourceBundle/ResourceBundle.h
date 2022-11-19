@@ -22,12 +22,14 @@ namespace db {
   struct ResourceBundle {
     HashMap data;
     Locale locale;
+
+    ResourceBundle &operator=(const ResourceBundle &original) = delete;
   };
 
   void getBundle(
                  ResourceBundle *bundle,
                  const char *bundleName,
-                 Locale locale,
+                 Locale locale = Locale::EN,
                  int *error = nullptr
                  );
 
