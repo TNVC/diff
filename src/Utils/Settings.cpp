@@ -21,9 +21,13 @@ static int initSettings()
 
 static void destroySettings()
 {
-  if (GlobalSettings.source   ) free(GlobalSettings.source   );
-  if (GlobalSettings.target   ) free(GlobalSettings.target   );
-  if (GlobalSettings.variables) free(GlobalSettings.variables);
+  if (GlobalSettings.source) free(GlobalSettings.source);
+  if (GlobalSettings.target) free(GlobalSettings.target);
+  if (GlobalSettings.table )
+    {
+      free(GlobalSettings.table->table);
+      free(GlobalSettings.table);
+    }
 }
 
 void setSettings(const Settings *settings)

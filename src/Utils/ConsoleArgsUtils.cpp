@@ -80,7 +80,9 @@ const char *FLAGS[] = {
   "-lang",
 };
 
-static void setDefaultSettings(Settings *settings);
+const int DEFAULT_GROWTH_FACTOR = 2;
+
+static bool setDefaultSettings(Settings *settings);
 
 /// Handle flag -in
 /// @param [in] argument Argument for -in
@@ -115,7 +117,7 @@ int parseConsoleArgs(const int argc, const char * const argv[], Settings *settin
   assert(argc > 0);
   assert(settings);
 
-  setDefaultSettings(settings);
+  if (setDefaultSettings(settings)) return 1;
   settings->programName = argv[0];
 
   setSettings(settings);
@@ -150,7 +152,7 @@ int parseConsoleArgs(const int argc, const char * const argv[], Settings *settin
   return 0;
 }
 
-static void setDefaultSettings(Settings *settings)
+static bool setDefaultSettings(Settings *settings)
 {
   assert(settings);
 
@@ -159,6 +161,15 @@ static void setDefaultSettings(Settings *settings)
   settings->target       = nullptr;
   settings->saveType     = Save::TEXT;
   settings->locale       = db::Locale::EN;
+  settings->table        = (db::VarTable *)calloc(1, sizeof(db::VarTable));
+
+  if (!settings->table)
+    return 1;
+
+  settings->table->size = settings->table->capacity = 0;
+  settings->table->table = nullptr;
+
+  return 0;
 }
 
 static int handleLoad(const char *argument, Settings *settings)
@@ -217,7 +228,7 @@ static int handleHelp(Settings *settings)
 
 static int handleVar(const char *argument, Settings *settings)
 {
-  int size = 0;
+  size_t size = 0;
   for ( ; argument[size] && !isspace(argument[size]) && argument[size] != '='; ++size)
     continue;
 
@@ -228,33 +239,45 @@ static int handleVar(const char *argument, Settings *settings)
       return 1;
     }
 
-  Variable *temp =
-    (Variable *)recalloc(settings->variables, (size_t)++settings->variableCount, sizeof(Variable));
-
-  if (!temp)
+  if (settings->table->size == settings->table->capacity)
     {
-      handleError("Out of memory!!");
+      db::Variable *temp =
+        (db::Variable *)recalloc(
+                                 settings->table->table,
+                                 (settings->table->capacity+1)*DEFAULT_GROWTH_FACTOR,
+                                 sizeof(db::Variable)
+                                );
+      if (!temp)
+        {
+          free(settings->table->table);
+          settings->table = nullptr;
+          free(settings->table);
+          settings->table = nullptr;
 
-      free(settings->variables);
+          handleError("Out of memory!!");
 
-      return 1;
+          return 1;
+        }
+
+      settings->table->table = temp;
+
+      ++settings->table->capacity;
+      settings->table->capacity *= DEFAULT_GROWTH_FACTOR;
     }
 
-  int index = settings->variableCount - 1;
+  size_t index = settings->table->size++;
 
-  settings->variables = temp;
+  settings->table->table[index].name = strndup(argument, size);
 
-  settings->variables[index].name = strndup(argument, size);
-
-  addElementForFree(settings->variables[index].name);
+  addElementForFree(settings->table->table[index].name);
 
   ++size;
 
   int offset = 0;
 
-  sscanf(argument + size, "%lg%n", &settings->variables[index].value, &offset);
+  sscanf(argument + size, "%lg%n", &settings->table->table[index].value, &offset);
 
-  if (offset != (int)strlen(argument) - size)//!isDigitString(argument))
+  if ((size_t)offset != strlen(argument) - size)//!isDigitString(argument))
     {
       handleError("Argument isn`t a number[%s]!!", argument + size);
 

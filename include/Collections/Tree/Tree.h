@@ -150,5 +150,9 @@ namespace db {
   void saveTree(const Tree *tree, FILE *file, int *error = nullptr);
 
   void loadTree(Tree *tree, FILE *file, int *error = nullptr);
-
+  void loadTree(
+                Tree *tree,
+                const char *fileName,
+                int *error = nullptr
+                );
 }

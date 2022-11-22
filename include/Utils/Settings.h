@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Locale.h"
+#include "Variable.h"
 
 /// Name of default directory for files
 const char * const DEFAULT_DIRECTORY = "./resources/";
@@ -14,19 +15,12 @@ enum class Save {
   TEX,
 };
 
-struct Variable {
-  char *name;
-  int number;
-  double value;
-};
-
 struct Settings {
   char       *source;
   char       *target;
   const char *programName;
   Save   saveType;
-  Variable *variables;
-  int variableCount;
+  db::VarTable *table;
   db::Locale locale;
 };
 

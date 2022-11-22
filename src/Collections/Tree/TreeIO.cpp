@@ -7,12 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include "Settings.h"
+#include "SystemLike.h"
+#include "Fiofunctions.h"
 #include "StringsUtils.h"
 #include "Assert.h"
 #include "ErrorHandler.h"
 
-const int MAX_LEXEME_SIZE = 48;
+const int MAX_NAME_SIZE = 256;
+static_assert(MAX_NAME_SIZE > 0);
 
+const int MAX_LEXEME_SIZE = 48;
 static_assert(MAX_LEXEME_SIZE >= db::MAX_VARIABLE_SIZE);
 
 static char *toString(const db::treeValue_t value, db::type_t type);
@@ -70,6 +74,35 @@ void db::loadTree(db::Tree *tree, FILE *file, int *error)
 
   if (errorCode)
     ERROR();
+
+  CHECK_VALID(tree, error);
+}
+
+static db::Tree getGeneral(const char *source, bool *fail);
+
+void db::loadTree(
+                  db::Tree *tree,
+                  const char *fileName,
+                  int *error
+                  )
+{
+  CHECK_VALID(tree, error);
+
+  if (!fileName) ERROR();
+
+  size_t fileSize = getFileSize(fileName);
+
+  char *buffer = (char *)calloc(fileSize, sizeof(char));
+
+  readFile(&buffer, fileName);
+
+  bool hasError = false;
+
+  *tree = getGeneral(buffer, &hasError);
+
+  free(buffer);
+
+  if (hasError) ERROR();
 
   CHECK_VALID(tree, error);
 }
@@ -305,4 +338,255 @@ static bool hasRightOperant(const db::TreeNode *node)
   if (node->type != db::type_t::OPERATOR) return false;
 
   return true;
+}
+
+
+//#######################################################################
+
+#include "ErrorHandler.h"
+#include "DiffDSL.h"
+#include <ctype.h>
+
+#define FAIL(...)                               \
+  do                                            \
+    {                                           \
+      handleError("Was unknow error in "        \
+                  "FILE:%s at LINE:%d",         \
+                  __FILE__, __LINE__);          \
+                                                \
+      if (fail) *fail = true;                   \
+                                                \
+      return __VA_ARGS__;                       \
+    } while (0)
+
+static void skipSpaces(const char **source, bool *fail);
+
+//static db::Tree      getGeneral          (const char *source, bool *fail);
+static db::TreeNode *getExpression       (const char **source, bool *fail);
+static db::TreeNode *getTermin           (const char **source, bool *fail);
+static db::TreeNode *getPrimaryExpression(const char **source, bool *fail);
+static db::TreeNode *getFunction         (const char **source, bool *fail);
+static db::TreeNode *getNumber           (const char **source, bool *fail);
+static db::TreeNode *getName             (const char **source, bool *fail);
+
+static db::TreeNode *createNumber(db::number_t value);
+static db::TreeNode *createVariable(db::variable_t value);
+
+static void skipSpaces(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL();
+
+  while (isspace(**source)) (*source)++;
+}
+
+static db::TreeNode *createNumber(db::number_t value)
+{
+  db::TreeNode *node = db::createNode({.number = value}, db::type_t::NUMBER);
+
+  return node;
+}
+
+static db::TreeNode *createVariable(db::variable_t value)
+{
+  db::TreeNode *node = db::createNode({.variable = value}, db::type_t::VARIABLE);
+
+  return node;
+}
+
+static db::Tree getGeneral(const char *source, bool *fail)
+{
+  if (!source || !fail) FAIL({});
+
+  db::Tree value{};
+
+  *fail = false;
+
+  value.root = getExpression(&source, fail);
+
+  skipSpaces(&source, fail);
+
+  char ch = *source;
+
+  if (ch != '\0')
+    {
+      handleError("Expected terminator, but found '%c'=%d", isprint(ch) ? ch : '~', ch);
+
+      *fail = true;
+
+      db::destroyTree(&value);
+
+      return {};
+    }
+
+  return value;
+}
+
+static db::TreeNode *getExpression(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL(nullptr);
+
+  db::TreeNode *value = getTermin(source, fail);
+
+  skipSpaces(source, fail);
+
+  while (strchr("+-", **source) && **source)
+    {
+      char operat = *(*source)++;
+
+      db::TreeNode *tempValue = getTermin(source, fail);
+
+      if (operat == '+')
+        value = ADD(value, tempValue);
+      else
+        value = SUB(value, tempValue);
+
+      skipSpaces(source, fail);
+    }
+
+  return value;
+}
+
+static db::TreeNode *getTermin(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL(nullptr);
+
+  db::TreeNode *value = getFunction(source, fail);
+
+  skipSpaces(source, fail);
+
+  while (strchr("*/", **source) && **source)
+    {
+      char operat = *(*source)++;
+
+      db::TreeNode *tempValue = getFunction(source, fail);
+
+      if (operat == '*')
+        value = MUL(value, tempValue);
+      else
+        value = DIV(value, tempValue);
+
+      skipSpaces(source, fail);
+    }
+
+  return value;
+}
+
+static db::TreeNode *getFunction(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL(nullptr);
+
+  bool isntFunction = false;
+
+  db::TreeNode *value = getName(source, &isntFunction);
+
+  if (!isntFunction)
+    {
+      SET_TO_OPERATOR(value);
+
+      value->right = getPrimaryExpression(source, &isntFunction);
+
+      if (isntFunction)
+        {
+          SET_TO_VARIABLE(value);
+
+          return value;
+        }
+
+      for (int i = 0; i < db::OPERATORS_COUNT; ++i)
+        if (!strcmp(db::OPERATOR_NAMES[i], VARIABLE(value)))
+          {
+            OPERATOR(value) = (db::operator_t)i;
+
+            break;
+          }
+
+      if (OPERATOR(value) >= db::OPERATORS_COUNT || OPERATOR(value) < 0)
+        {
+          handleError("Unknown function \"%s\"", VARIABLE(value));
+
+          db::removeNode(value);
+
+          return nullptr;
+        }
+    }
+  else
+    value = getPrimaryExpression(source, fail);
+
+  return value;
+}
+
+static db::TreeNode *getPrimaryExpression(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL(nullptr);
+
+  db::TreeNode *value = nullptr;
+
+  skipSpaces(source, fail);
+
+  if (**source == '(')
+    {
+      value = getExpression(&++*source, fail);
+
+      skipSpaces(source, fail);
+
+      char ch = **source;
+      if (ch != ')')
+        {
+          handleError("Expected '(', but found '%c'=%d", isprint(ch) ? ch : '~', ch);
+
+          if (value) db::removeNode(value);
+
+          FAIL(nullptr);
+        }
+
+      ++*source;
+    }
+  else
+    {
+      bool hasntVariable = false;
+      value = getName(source, &hasntVariable);
+
+      if (hasntVariable)
+        value = getNumber(source, fail);
+    }
+
+  return value;
+}
+
+static db::TreeNode *getNumber(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL(nullptr);
+
+  skipSpaces(source, fail);
+
+  double value = 0;
+
+  const char *startPosition = *source;
+
+  while (isdigit(**source))
+    value = 10*value + *(*source)++-'0';
+
+  if (*source <= startPosition) { *fail = true; return nullptr; }
+
+  return NUM(value);
+}
+
+static db::TreeNode *getName(const char **source, bool *fail)
+{
+  if (!source || !*source || !fail) FAIL(nullptr);
+
+  skipSpaces(source, fail);
+
+  char buffer[MAX_NAME_SIZE] = "";
+
+  int i = 0;
+
+  const char *startPosition = *source;
+
+  while (isalpha(**source))
+    buffer[i++] = *(*source)++;
+
+  if (*source <= startPosition) { *fail = true; return nullptr; }
+
+  return VAR(buffer);
 }

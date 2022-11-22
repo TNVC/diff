@@ -7,21 +7,14 @@
 #include "Assert.h"
 #include "ColorOutput.h"
 #include "ResourceBundle.h"
+#include "Error.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
 
 #pragma GCC diagnostic ignored "-Wtautological-compare"
-
-#define ERROR(...)                              \
-  do                                            \
-    {                                           \
-      if (error)                                \
-        *error = -1;                            \
-                                                \
-      return __VA_ARGS__;                       \
-    } while (0)
+#pragma GCC diagnostic ignored "-Wcast-qual"
 
 const double ACCURACY = 1. / 10000.;
 
@@ -40,7 +33,7 @@ static inline double factorial(int n)
   return result;
 }
 
-static double getVariableValue(const Settings *settings,  db::variable_t variable);
+static double getVariableValue(const db::VarTable *table,  db::variable_t variable);
 
 static db::TreeNode *createNumber(db::number_t value);
 
@@ -52,37 +45,31 @@ static db::TreeNode *simplite(db::TreeNode *node, bool *wasChange, FILE *file);
 
 static db::TreeNode *diff(db::TreeNode *node);
 
-double calculateNode(const Settings *settings, const db::TreeNode *node, double value);
-
-static db::Tree calculateTanget(const Settings *settings, const db::Tree *tree);
-
-static db::Tree calculateSeries(const Settings *settings, const db::Tree *tree);
-
-void something(const db::Tree *tree, FILE *file)
+static db::TreeNode *createNumber(db::number_t value)
 {
-  Settings settings{};
+  db::TreeNode *node = db::createNode({.number = value}, db::type_t::NUMBER);
 
-  bool wasChange = false;
+  return node;
+}
 
-  getSettings(&settings);
-
-  db::Tree tan = calculateTanget(&settings, tree);
-
-  db::Tree ser = calculateSeries(&settings, tree);
-
-
-do
+static db::TreeNode *createVariable(db::variable_t value)
 {
-  wasChange = false;
-  tan.root = simplite(tan.root, &wasChange, file);
-  ser.root = simplite(ser.root, &wasChange, file);
-  } while (wasChange);
+  db::TreeNode *node = db::createNode({.variable = value}, db::type_t::VARIABLE);
 
-  db::saveTexTree(&tan, file);
-  db::saveTexTree(&ser, file);
+  return node;
+}
 
-  //db::destroyTree(&tan);
-  //db::destroyTree(&ser);
+static bool isConst(const db::TreeNode *node)
+{
+  assert(node);
+
+  if (IS_VAR(node) && !strcmp(VARIABLE(node), db::DEFAULT_MAIN_NAME))
+    return false;
+
+  if (Left  && !isConst(Left )) return false;
+  if (Right && !isConst(Right)) return false;
+
+  return true;
 }
 
 db::Tree diffExpresion(const db::Tree *tree, FILE *file, int *error)
@@ -107,7 +94,7 @@ db::Tree diffExpresion(const db::Tree *tree, FILE *file, int *error)
     {
       if (file)
         {
-          fprintf(file, "First\n");
+          fprintf(file, "After diff:\n");
           db::saveTexTree(tree, file);
         }
 
@@ -117,7 +104,7 @@ db::Tree diffExpresion(const db::Tree *tree, FILE *file, int *error)
 
       if (file)
         {
-          fprintf(file, "Second\n");
+          fprintf(file, "After simplite:\n");
           db::saveTexTree(tree, file);
         }
     } while (wasChange);
@@ -125,15 +112,16 @@ db::Tree diffExpresion(const db::Tree *tree, FILE *file, int *error)
   return diffTree;
 }
 
-static db::Tree calculateTanget(const Settings *settings, const db::Tree *originTree)
+db::Tree calculateTanget(const db::VarTable *table, const db::Tree *originTree, int *error)
 {
-  assert(settings);
-  assert(originTree);
-  assert(originTree->root);
+  if (!isVarTableValid(table))
+    ERROR({});
+  if (!originTree || !originTree->root)
+    ERROR({});
 
-  db::TreeNode *var = VAR(strdup("x"));
+  db::TreeNode *var = VAR((char *)"x");
 
-  double value = getVariableValue(settings, VARIABLE(var));
+  double *value = db::searchMainVariable(table);
 
   db::Tree diffTree{};
 
@@ -141,27 +129,33 @@ static db::Tree calculateTanget(const Settings *settings, const db::Tree *origin
 
   db::Tree tree{};
 
-  tree.root = db::createNode(originTree->root);
-
   tree.root = ADD(
                   MUL(
-                      NUM(calculateNode(settings, diffTree.root, value)),
-                      SUB(var, NUM(value))
+                      NUM(calculateNode(table,   diffTree.root)),
+                      SUB(var, NUM(*value))
                      ),
-                  NUM(    calculateNode(settings,     tree.root, value))
+                  NUM(    calculateNode(
+                                        table,
+                                        originTree->root
+                                       )
+                     )
                  );
+
+  db::destroyTree(&diffTree);
 
   return tree;
 }
 
-static db::Tree calculateSeries(const Settings *settings, const db::Tree *originTree)
+db::Tree calculateSeries(const db::VarTable *table, const db::Tree *originTree, int power, int *error)
 {
-  assert(settings);
-  assert(originTree);
+  if (!isVarTableValid(table))
+    ERROR({});
+  if (!originTree || !originTree->root)
+    ERROR({});
 
-  db::TreeNode *var = VAR(strdup("x"));
+  db::TreeNode *var = VAR((char *)"x");
 
-  double value = getVariableValue(settings, VARIABLE(var));
+  double *value = db::searchMainVariable(table);
 
   db::Tree diffTree{};
 
@@ -169,19 +163,17 @@ static db::Tree calculateSeries(const Settings *settings, const db::Tree *origin
 
   diffTree = diffExpresion(originTree, nullptr);
 
-  series.root = NUM(calculateNode(settings, diffTree.root, value));
+  series.root = NUM(calculateNode(table, diffTree.root));
 
-  int n = 10;
-
-  for (int k = 1; k <= n; ++k)
+  for (int k = 1; k <= power; ++k)
     {
       series.root = ADD(
                         series.root,
                         DIV(
                             MUL(
-                                NUM(calculateNode(settings, diffTree.root, value)),
+                                NUM(calculateNode(table, diffTree.root)),
                                 POW(
-                                    SUB(var, NUM(value)),
+                                    SUB(db::createNode(var), NUM(*value)),
                                     NUM(k)
                                    )
                                ),
@@ -194,66 +186,60 @@ static db::Tree calculateSeries(const Settings *settings, const db::Tree *origin
       db::removeNode(temp);
     }
 
+  db::destroyTree(&diffTree);
+
+  db::removeNode(var);
+
   return series;
 }
 
-void executeExpresion(const db::Tree *tree, double value, int *error)
+void executeExpresion(const db::Tree *tree, int *error)
 {
   assert(tree);
   if (!tree->root)
     ERROR();
 
   Settings settings{};
-
   getSettings(&settings);
 
-  double result = calculateNode(&settings, tree->root, value);
+  db::VarTable *table = settings.table;
+
+  double result = calculateNode(table, tree->root);
 
   printf("%lg\n", result);
 }
 
-static double getVariableValue(const Settings *settings, db::variable_t variable)
+static double getVariableValue(const db::VarTable *table, db::variable_t variable)
 {
-  assert(settings);
+  assert(table);
   assert(variable);
 
-  for (int i = 0; i < settings->variableCount; ++i)
-    if (strcmp(settings->variables[i].name, variable))
-      return settings->variables[i].value;
+  for (size_t i = 0; i < table->size; ++i)
+    if (!strcmp(table->table[i].name, variable))
+      return table->table[i].value;
 
-  printf("%s" ITALIC "%s" RESET ": ", db::getString(getBundle(), "variable.read"),
-         variable);
-
-  double value = NAN;
-
-  while (scanf("%lg", &value) != 1)
-    {
-      while (getchar() != '\n') continue;
-
-      printf("%s", db::getString(getBundle(), "input.incorrect"));
-    }
-
-  while (getchar() != '\n') continue;
-
-  return value;
+  return NAN;
 }
 
-double calculateNode(const Settings *settings, const db::TreeNode *node, double varValue)
+double calculateNode(const db::VarTable *table, const db::TreeNode *node)
 {
-  assert(settings);
-  assert(node);
+  assert(table);
+  //assert(node);
 
   if (IS_NUM(node)) return NUMBER(node);
   if (IS_VAR(node))
     {
-      if (!isnan(varValue) && !strcmp(VARIABLE(node), "x"))
-        return varValue;
+      if (!isnan(*db::searchMainVariable(table)) && !strcmp(
+                                               VARIABLE(node),
+                                               db::DEFAULT_MAIN_NAME
+                                              ))
+        return *db::searchMainVariable(table);
 
-      return getVariableValue(settings, VARIABLE(node));
+      return getVariableValue(table, VARIABLE(node));
     }
 
-  double leftValue  = (Left  ? calculateNode(settings, Left , varValue) : NAN);
-  double rightValue = (Right ? calculateNode(settings, Right, varValue) : NAN);
+  double leftValue  = (Left  ? calculateNode(table, Left ) : NAN);
+  double rightValue = (Right ? calculateNode(table, Right) : NAN);
 
   switch (OPERATOR(node))
     {
@@ -281,7 +267,7 @@ static db::TreeNode *diff(db::TreeNode *node)
     case db::type_t::NUMBER:   return NUM(0);
     case db::type_t::VARIABLE:
       {
-        if (!strcmp(VARIABLE(node), "x"))
+        if (!strcmp(VARIABLE(node), db::DEFAULT_MAIN_NAME))
           return NUM(1);
         else
           return NUM(0);
@@ -351,36 +337,6 @@ static db::TreeNode *diff(db::TreeNode *node)
     }
 }
 
-static db::TreeNode *createNumber(db::number_t value)
-{
-  db::TreeNode *node = db::createNode({.number = value}, db::type_t::NUMBER);
-
-  return node;
-}
-
-static db::TreeNode *createVariable(db::variable_t value)
-{
-  db::TreeNode *node = db::createNode({.variable = value}, db::type_t::VARIABLE);
-
-  return node;
-}
-
-static bool isConst(const db::TreeNode *node)
-{
-  assert(node);
-
-  if (node->type == db::type_t::VARIABLE)
-    return false;
-
-  if (node->left  && !isConst(node->left))
-    return false;
-
-  if (node->right && !isConst(node->right))
-    return false;
-
-  return true;
-}
-
 static db::TreeNode *simplite(db::TreeNode *node, bool *wasChange, FILE *file)
 {
   assert(node);
@@ -389,10 +345,6 @@ static db::TreeNode *simplite(db::TreeNode *node, bool *wasChange, FILE *file)
   if (IS_NUM(node)) return node;
 
   if (IS_VAR(node)) return node;
-
-  //fprintf(file, "First\n");
-
-  //db::saveTexNode(node, file);
 
   if (IS_OPERATOR(node))
     {
@@ -508,11 +460,6 @@ static db::TreeNode *simplite(db::TreeNode *node, bool *wasChange, FILE *file)
             return nullptr;
         }
     }
-
-
-  //fprintf(file, "Second\n");
-
-  //db::saveTexNode(node, file);
 
   return node;
 }

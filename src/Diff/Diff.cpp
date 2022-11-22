@@ -1,6 +1,10 @@
 #include "Diff.h"
 #include "DiffUtils.h"
 
+
+#include "Coordinate.h"
+
+
 #include "Tree.h"
 #include "Settings.h"
 #include <stdio.h>
@@ -31,6 +35,8 @@ const int MAX_FILE_NAME = 256;
 
 static db::ResourceBundle Bundle{};
 
+static void destroy();
+
 static int menu(Settings *settings, bool needSave, bool wasRead);
 
 static bool checkAnswer  (const char *answer, int answerSize, bool needSave, bool wasRead);
@@ -42,7 +48,14 @@ bool init()
 {
   db::getBundle(&Bundle, "messages");
 
+  atexit(destroy);
+
   return true;
+}
+
+static void destroy()
+{
+  db::destroyBundle(&Bundle);
 }
 
 db::ResourceBundle *getBundle()
@@ -53,14 +66,15 @@ db::ResourceBundle *getBundle()
 void start()
 {
   Settings settings{};
-
   getSettings(&settings);
 
   db::Tree tree{};
   db::Tree diffTree{};
+  db::Tree tangetTree{};
 
   db::createTree(&tree);
   db::createTree(&diffTree);
+  db::createTree(&tangetTree);
 
   FILE *source = fopen(settings.source, "r");
 
@@ -69,10 +83,9 @@ void start()
   bool needSave   = true;
   bool wasRead    = false;
   bool wasDiff    = false;
+  bool needContinue = true;
 
-  char *buildGraphics(const db::Tree *tree);
-
-  while (true)
+  while (needContinue)
     {
       switch (menu(&settings, needSave, wasRead))
         {
@@ -83,13 +96,15 @@ void start()
             if (tree.root)
               db::removeNode(tree.root);
             rewind(source);
-            db::loadTree(&tree, source);
+            db::loadTree(&tree, settings.source);
             if (!tree.root)
               {
                 printf(ITALIC FG_RED "%s\n" RESET, db::getString(&Bundle, "input.empty"));
 
                 wasRead = false;
               }
+
+            db::updateVarTable(settings.table, tree.root);
             break;
           }
         case CHANGE:
@@ -109,7 +124,6 @@ void start()
             db::saveTree(&tree, stdout);
             fflush(0);
             executeExpresion(&tree);
-            buildGraphics(&tree);
             break;
           }
         case DIFF:
@@ -131,21 +145,59 @@ void start()
             setSettings(&settings);
 
             rewind(target);
+            fprintf(target, "\\documentclass{book}\n\\usepackage{graphicx}\n\\begin{document}\n");
             db::saveTree(&tree, target);
 
-            if (wasDiff) db::saveTree(&diffTree, target);
+            if (diffTree.root)
+              {
+              db::removeNode(diffTree.root);
+              diffTree.root = nullptr;
+              }
+            diffTree = diffExpresion(&tree, target);
+
+            if (tangetTree.root)
+              {
+                db::removeNode(tangetTree.root);
+                tangetTree.root = nullptr;
+              }
+            tangetTree = calculateTanget(settings.table, &tree);
+
+            db::Tree seriesTree{};
+
+            db::createTree(&seriesTree);
+
+            seriesTree = calculateSeries(settings.table, &tree, 100);
+
+            db::Expression *trees = (db::Expression *)calloc(4, sizeof(db::Expression));
+            trees[0] = db::Expression {&tree, "original"};
+            trees[1] = db::Expression {&diffTree, "diff"};
+            trees[2] = db::Expression {&tangetTree, "tanget"};
+            trees[3] = db::Expression {&seriesTree, "series"};
+
+            db::Plot plot{trees, 4, {-10, 10}, {-10, 10}, 5000};
 
             settings.saveType = Save::TEXT;
             setSettings(&settings);
 
-            fprintf(target, " \\end");
+            char *graphics = buildGraphics(&plot);
+
+            fprintf(target, "\\includegraphics[width=15cm]{%s}", graphics);
+
+            free(graphics);
+            free(trees);
+
+            db::destroyTree(&seriesTree);
+
+            fprintf(target, " \\end{document}");
             fflush(target);
-            system("pdftex .temp/temp_tex.tex > .temp/output");
+            system("pdflatex .temp/temp_tex.tex > .temp/output");
             system("open temp_tex.pdf");
             break;
           }
         case QUIT:
-          printf("Goodbye.\n"); goto exit;
+          printf("Goodbye.\n");
+          needContinue = false;
+          break;
         case CHANGE_SAVE:
           needSave = !needSave; break;
         default:
@@ -153,19 +205,17 @@ void start()
         }
     }
 
- exit:
-
   setSettings(&settings);
 
   fclose(source);
 
   fclose(target);
 
-  dumpTree(&diffTree, 0, fopen(".log/temp.html", "w"));
+  //dumpTree(&diffTree, 0, fopen(".log/temp.html", "w"));
 
   db::destroyTree(&tree);
-
   db::destroyTree(&diffTree);
+  db::destroyTree(&tangetTree);
 
   system("rm -f .temp/output temp_tex.pdf temp_tex.log");
 }

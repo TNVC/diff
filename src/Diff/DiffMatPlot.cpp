@@ -1,51 +1,84 @@
-#include "Tree.h"
+#include <matplot/matplot.h>
 
+#include "Coordinate.h"
+#include "Variable.h"
 #include "Settings.h"
+#include "ErrorHandler.h"
 
 #include <vector>
 #include <string.h>
 #include <cmath>
+#include <array>
 
-#pragma GCC diagnostic ignored "-Weffc++"
-#pragma GCC diagnostic ignored "-Wuseless-cast"
-#pragma GCC diagnostic ignored "-Wconditionally-supported"
-#pragma GCC diagnostic ignored "-Wcast-qual"
-#pragma GCC diagnostic ignored "-Wundef"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wmissing-declarations"
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wfloat-equal"
-#pragma GCC diagnostic ignored "-Wundef"
+#include "DiffUtils.h"
+#include "GenerateName.h"
+#include "Assert.h"
+#include "Error.h"
 
-#include "matplotlibcpp.h"
-
-double calculateNode(const Settings *settings, const db::TreeNode *node, double value);
-
-char *buildGraphics(const db::Tree *tree)
+char *buildGraphics(const db::Plot *plot, int *error)
 {
-  namespace plt = matplotlibcpp;
+  if (!db::isValidPlot(plot))
+    ERROR(nullptr);
+
+  char *name = generateName(".temp/image", "png", "_", ".");
+
+  if (!name)
+    ERROR(nullptr);
 
   Settings settings{};
   getSettings(&settings);
 
-  //char *name = strdup("graphics.png");
+  db::VarTable *table = settings.table;
 
-  int n = 5000;
+  double *mainValue = db::searchMainVariable(table);
 
-  std::vector<double> x(n), y(n);
-  for (int i = 0; i < n; ++i)
+  if (!mainValue)
     {
-      double t = 2*M_PI * i/n;
+      handleError("No main variable!!");
 
-      x.at(i) = t;
-      y.at(i) = calculateNode(&settings, tree->root, t);
+      ERROR(nullptr);
     }
 
-  plt::plot(x, y, "r-");
+  double originMainValue = *mainValue;
 
-  plt::show();
+  namespace plt = matplot;
 
-  //return name;
+  std::array<double, 2> xRange{plot->xRange.min, plot->xRange.max};
+  std::array<double, 2> yRange{plot->yRange.min, plot->yRange.max};
 
-  return nullptr;
+  plt::ylim(xRange);
+  plt::ylim(yRange);
+
+  std::vector<double> x(plot->density);
+
+  double range = plot->xRange.max - plot->xRange.min;
+  for (size_t i = 0; i < plot->density; ++i)
+    x.at(i) = plot->xRange.min + range * (double)i/plot->density;
+
+  std::vector<std::vector<double>>
+    y(plot->expressionsCount, std::vector<double>(plot->density));
+
+  for (size_t i = 0; i < plot->expressionsCount; ++i)
+    y[i] = plt::transform(x,
+                          [main=mainValue, &table, &plot, i](auto val)
+                          {
+                            *main = (double)val;
+
+                            return calculateNode(table, plot->expressions[i].expression->root);
+                          });
+
+  plt::plot(y);
+
+  std::vector<std::string> legends{};
+
+  for (size_t i = 0; i < plot->expressionsCount; ++i)
+    legends.push_back(plot->expressions[i].name);
+
+  plt::legend(legends);
+
+  plt::save(name);
+
+  *mainValue = originMainValue;
+
+  return name;
 }
